@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform:
+  - AWS::Serverless-2016-10-31
+
+Description: QueueLess - AWS serverless campus service decision assistant
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures:
+      - x86_64
+    MemorySize: 512
+    Timeout: 30
+
+Resources:
+
+  QueueLessApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type'"
+        AllowOrigin: "'*'"
+
+  QueueLessApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: src/handlers/queueless-api.handler
+      Description: QueueLess API and deterministic visit decision engine
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref QueueLessServicesTable
+
+        - Statement:
+            Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+            Resource: arn:aws:secretsmanager:us-east-1:701331083744:secret:QueueLess/GeminiApiKey-3xRRQ2
+      Environment:
+        Variables:
+          SERVICES_TABLE: !Ref QueueLessServicesTable
+          GEMINI_SECRET_ARN: arn:aws:secretsmanager:us-east-1:701331083744:secret:QueueLess/GeminiApiKey-3xRRQ2
+      Events:
+
+        Health:
+          Type: Api
+          Properties:
+            RestApiId: !Ref QueueLessApi
+            Path: /health
+            Method: GET
+
+        GetServices:
+          Type: Api
+          Properties:
+            RestApiId: !Ref QueueLessApi
+            Path: /api/services
+            Method: GET
+
+        GetService:
+          Type: Api
+          Properties:
+            RestApiId: !Ref QueueLessApi
+            Path: /api/services/{serviceId}
+            Method: GET
+
+        Decision:
+          Type: Api
+          Properties:
+            RestApiId: !Ref QueueLessApi
+            Path: /api/decision
+            Method: POST
+
+        UpdateQueue:
+          Type: Api
+          Properties:
+            RestApiId: !Ref QueueLessApi
+            Path: /api/queue/{serviceId}
+            Method: POST
+
+        GetQueue:
+          Type: Api
+          Properties:
+            RestApiId: !Ref QueueLessApi
+            Path: /api/queue/{serviceId}
+            Method: GET
+
+  QueueLessServicesTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: QueueLessServices
+      PrimaryKey:
+        Name: id
+        Type: String
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+
+Outputs:
+
+  QueueLessApiUrl:
+    Description: QueueLess API Gateway endpoint
+    Value: !Sub
+      - "https://${ApiId}.execute-api.${AWS::Region}.${AWS::URLSuffix}/Prod"
+      - ApiId: !Ref QueueLessApi
+
+  QueueLessServicesTableName:
+    Description: DynamoDB table used by QueueLess
+    Value: !Ref QueueLessServicesTable

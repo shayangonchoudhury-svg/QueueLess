@@ -12,7 +12,13 @@ import {
   INITIAL_PULSE_HUBS,
 } from '../data/mockData';
 import { calculateVisitDecision, formatTo12Hour, addMinutesToTime } from '../utils/decisionEngine';
-import { updateMockServiceQueue, updateUserDocument } from '../services/api';
+import {
+  getServices,
+  getQueue,
+  updateMockServiceQueue,
+  updateUserDocument,
+  calculateDecision,
+} from '../services/api';
 
 interface AppContextType {
   services: CampusService[];
@@ -24,7 +30,7 @@ interface AppContextType {
   simulatedTime: string;
   setSimulatedTime: (time24: string) => void;
   currentDecision: VisitDecision;
-  recomputeDecision: () => VisitDecision;
+  recomputeDecision: () => Promise<VisitDecision>;
   
   // Queue Management
   activeTicket: QueueTicket | null;
@@ -74,6 +80,99 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [notification]);
 
+    // Load live service and queue data from AWS on startup.
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadLiveServices = async () => {
+      try {
+        const liveServices = await getServices();
+
+       if (!cancelled && liveServices.length > 0) {
+  setServices(liveServices);
+
+  const currentService = liveServices.find(
+    (service) => service.id === selectedService.id
+  );
+
+  if (currentService) {
+    setSelectedService(currentService);
+  }
+
+  // Update Live Campus Pulse from the same AWS service data.
+  setPulseHubs((prev) =>
+    prev.map((hub) => {
+      const liveService = liveServices.find(
+        (service) => service.office === hub.name
+      );
+
+      if (!liveService) {
+        return hub;
+      }
+
+      const estimatedWaitMinutes =
+        liveService.queueAhead *
+        liveService.averageServiceMinutes;
+
+      return {
+        ...hub,
+        currentWaiting: liveService.queueAhead,
+        estimatedWaitMinutes,
+        status:
+          liveService.queueAhead > 15
+            ? 'congested'
+            : liveService.queueAhead > 6
+              ? 'moderate'
+              : 'optimal',
+      };
+    })
+  );
+}
+
+      } catch (error) {
+        console.error(
+          'Failed to load live QueueLess services:',
+          error
+        );
+      }
+    };
+
+    loadLiveServices();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  
+  // Load the live token queue from AWS for the selected service.
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadLiveQueue = async () => {
+      try {
+        const queue = await getQueue(selectedService.id);
+
+        if (!cancelled) {
+          setServingToken(queue.currentServing);
+          setWaitingTokens(queue.tokensAhead);
+        }
+      } catch (error) {
+        console.error(
+          'Failed to load live QueueLess queue:',
+          error
+        );
+      }
+    };
+
+    loadLiveQueue();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedService.id]);
+
+
   // Keep selectedService in sync if services list updates
   useEffect(() => {
     const updated = services.find((s) => s.id === selectedService.id);
@@ -93,13 +192,48 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [servingToken, activeTicket?.tokenNumber]);
 
-  // Decision calculation memoized
-  const currentDecision = useMemo(() => {
-    return calculateVisitDecision(selectedService, userDocuments, simulatedTime);
+  // Decision starts with the local calculation so the UI has an immediate value.
+  const [currentDecision, setCurrentDecision] = useState<VisitDecision>(() =>
+    calculateVisitDecision(selectedService, userDocuments, simulatedTime)
+  );
+
+  // Real decision calculation through the QueueLess backend.
+  useEffect(() => {
+    let cancelled = false;
+
+    const refreshDecision = async () => {
+      try {
+        const decision = await calculateDecision(
+          selectedService,
+          userDocuments,
+          simulatedTime
+        );
+
+        if (!cancelled) {
+          setCurrentDecision(decision);
+        }
+      } catch (error) {
+        console.error('Failed to get QueueLess backend decision:', error);
+      }
+    };
+
+    refreshDecision();
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedService, userDocuments, simulatedTime]);
 
-  const recomputeDecision = () => {
-    return calculateVisitDecision(selectedService, userDocuments, simulatedTime);
+  const recomputeDecision = async (): Promise<VisitDecision> => {
+    const decision = await calculateDecision(
+      selectedService,
+      userDocuments,
+      simulatedTime
+    );
+
+    setCurrentDecision(decision);
+
+    return decision;
   };
 
   const toggleRequirement = (reqId: string) => {
@@ -194,13 +328,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         currentWaiting.filter((tok) => tok !== nextServing)
       );
 
-      // Decrement queueCount on active service
-      const targetId = serviceId || selectedService.id;
-      setServices((svcList) =>
-        svcList.map((svc) =>
-          svc.id === targetId ? { ...svc, queueCount: Math.max(0, svc.queueCount - 1) } : svc
-        )
-      );
+      // Decrement queueCount and persist the change to AWS.
+const targetId = serviceId || selectedService.id;
+
+const targetService = services.find(
+  (svc) => svc.id === targetId
+);
+
+const newQueueCount = Math.max(
+  0,
+  (targetService?.queueCount ?? 0) - 1
+);
+
+setServices((svcList) =>
+  svcList.map((svc) =>
+    svc.id === targetId
+      ? { ...svc, queueCount: newQueueCount }
+      : svc
+  )
+);
+
+updateMockServiceQueue(targetId, newQueueCount).catch((error) => {
+  console.error('Failed to sync queue update with AWS:', error);
+  setNotification('Queue updated locally, but AWS sync failed.');
+});
 
       if (activeTicket && nextServing === activeTicket.tokenNumber) {
         setNotification(`🔔 Token #${activeTicket.tokenNumber}: You are now being served!`);

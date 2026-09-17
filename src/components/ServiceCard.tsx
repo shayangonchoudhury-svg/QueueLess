@@ -79,8 +79,8 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({
 
   const theme = getQueueTheme();
   const estimatedWait = Math.round(
-    (service.queueCount * service.averageServiceTimeMinutes) / (service.activeCounters || 1)
-  );
+  service.queueCount * service.averageServiceTimeMinutes
+);
 
   return (
     <div

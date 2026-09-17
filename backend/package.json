@@ -3,17 +3,25 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
+  "dev": "tsx src/server.ts",
+  "agent": "tsx src/agent.ts"
+},
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "type": "module",
   "dependencies": {
-    "@strands-agents/sdk": "^1.17.0"
+    "@google/genai": "^2.23.0",
+    "@strands-agents/sdk": "^1.17.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "@types/node": "^26.5.1",
     "tsx": "^4.23.13",
     "typescript": "^7.0.2"

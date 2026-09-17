@@ -90,7 +90,7 @@ export const DecisionCard: React.FC<DecisionCardProps> = ({
   const IconComponent = theme.icon;
 
   // Multi-signal checklist evaluation
-  const allDocsReady = decision.missingCount === 0;
+  const allDocsReady = decision.missingRequirements.length === 0;
 
   return (
     <div className="w-full max-w-3xl mx-auto space-y-6">
